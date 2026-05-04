@@ -77,6 +77,7 @@ const assistantWelcome =
 
 const MAX_ACTIVE_NOTE_CONTEXT_CHARS = 40_000
 const NOTE_CONTENT_EXTERNAL_CHANGED_EVENT = "note-content-external-changed"
+const NOTE_CONTENT_PROPOSAL_EVENT = "note-content-proposal"
 
 function isActiveNoteUpdateRequest(content: string) {
   return (
@@ -559,6 +560,25 @@ export function Chat({
   }, [activeFilePath])
 
   React.useEffect(() => {
+    const handleExternalNoteContentChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ content?: string | null; path?: string | null }>).detail
+      if (
+        activeFilePath &&
+        detail?.path &&
+        isSameFilePath(detail.path, activeFilePath) &&
+        typeof detail.content === "string"
+      ) {
+        setActiveFileContent(detail.content)
+      }
+    }
+
+    window.addEventListener(NOTE_CONTENT_EXTERNAL_CHANGED_EVENT, handleExternalNoteContentChanged)
+    return () => {
+      window.removeEventListener(NOTE_CONTENT_EXTERNAL_CHANGED_EVENT, handleExternalNoteContentChanged)
+    }
+  }, [activeFilePath])
+
+  React.useEffect(() => {
     let cancelled = false
     setProvidersLoading(true)
     listCliProviders()
@@ -676,7 +696,9 @@ export function Chat({
 
       let accumulated = ""
       let firstChunkReceived = false
+      let hasPendingProposal = false
       const refreshedPaths = new Set<string>()
+      const proposalTasks: Promise<void>[] = []
 
       const refreshExternalFile = async (path: string, source: string) => {
         if (refreshedPaths.has(path)) {
@@ -713,6 +735,49 @@ export function Chat({
         }
       }
 
+      const proposeExternalFileChange = async (path: string, source: string) => {
+        console.debug("[cli-chat] preparing note change proposal", {
+          activeFilePath,
+          path,
+          source,
+        })
+
+        try {
+          const proposedContent = await readTextFile(path)
+          const originalContent =
+            activeFilePath && isSameFilePath(path, activeFilePath)
+              ? activeFileContent ?? ""
+              : ""
+
+          if (originalContent && proposedContent !== originalContent) {
+            await writeTextFile(path, originalContent)
+            console.debug("[cli-chat] reverted disk change pending review", {
+              path,
+              source,
+            })
+          }
+
+          window.dispatchEvent(
+            new CustomEvent(NOTE_CONTENT_PROPOSAL_EVENT, {
+              detail: {
+                originalContent,
+                path,
+                proposedContent,
+                source,
+              },
+            }),
+          )
+          hasPendingProposal = true
+        } catch (error) {
+          console.debug("[cli-chat] note change proposal failed", {
+            error,
+            path,
+            source,
+          })
+          await refreshExternalFile(path, source)
+        }
+      }
+
       try {
         await streamCliChat({
           chatId: assistantMessageId,
@@ -734,6 +799,11 @@ export function Chat({
             )
           },
           onFileChanged: path => {
+            if (activeFilePath && isSameFilePath(path, activeFilePath)) {
+              hasPendingProposal = true
+              proposalTasks.push(proposeExternalFileChange(path, "cli-change-detection"))
+              return
+            }
             void refreshExternalFile(path, "cli-change-detection")
           },
           onDelta: delta => {
@@ -752,18 +822,33 @@ export function Chat({
           },
         })
 
+        if (proposalTasks.length > 0) {
+          await Promise.allSettled(proposalTasks)
+        }
+
         if (
           activeFilePath &&
           refreshedPaths.size === 0 &&
+          !hasPendingProposal &&
           isActiveNoteUpdateRequest(trimmedContent)
         ) {
           const markdownUpdate = stripAssistantMarkdownResponse(accumulated)
           if (markdownUpdate) {
-            console.debug("[cli-chat] applying assistant markdown fallback", {
+            console.debug("[cli-chat] creating assistant markdown proposal", {
               activeFilePath,
               chars: markdownUpdate.length,
             })
-            await writeTextFile(activeFilePath, markdownUpdate.endsWith("\n") ? markdownUpdate : `${markdownUpdate}\n`)
+            window.dispatchEvent(
+              new CustomEvent(NOTE_CONTENT_PROPOSAL_EVENT, {
+                detail: {
+                  originalContent: activeFileContent ?? "",
+                  path: activeFilePath,
+                  proposedContent: markdownUpdate.endsWith("\n") ? markdownUpdate : `${markdownUpdate}\n`,
+                  source: "assistant-markdown-fallback",
+                },
+              }),
+            )
+            hasPendingProposal = true
           } else {
             console.debug("[cli-chat] assistant markdown fallback skipped: no markdown payload", {
               activeFilePath,

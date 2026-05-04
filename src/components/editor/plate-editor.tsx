@@ -10,7 +10,9 @@ import { useEmojiDropdownMenuState } from '@platejs/emoji/react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { exists, readFile, readTextFile, rename, writeTextFile } from '@tauri-apps/plugin-fs';
 import { MarkdownPlugin } from '@platejs/markdown';
-import { FileText, LoaderCircle, SmilePlusIcon, XIcon } from 'lucide-react';
+import { diffToSuggestions, getSuggestionKey } from '@platejs/suggestion';
+import { CheckIcon, FileText, LoaderCircle, SmilePlusIcon, XIcon } from 'lucide-react';
+import { KEYS } from 'platejs';
 import { Plate, type PlateChunkProps, usePlateEditor } from 'platejs/react';
 
 import { BottomEditorBar } from '@/components/editor/bottom-editor-bar';
@@ -73,15 +75,37 @@ type ExternalNoteContentChangedDetail = {
   source?: string | null;
 };
 
+type NoteContentProposalDetail = {
+  originalContent?: string | null;
+  path?: string | null;
+  proposedContent?: string | null;
+  source?: string | null;
+};
+
+type SuggestionData = {
+  createdAt: number;
+  id: string;
+  type: 'insert' | 'remove';
+  userId: string | null;
+};
+
+type NoteChangeProposal = {
+  id: string;
+  hasFrontmatter: boolean;
+  originalContent: string;
+  path: string;
+  proposedBody: string;
+  proposedContent: string;
+  proposedProperties: EditorPropertyItem[];
+  source: string | null;
+};
+
 const EMPTY_DOCUMENT = [{ type: 'p', children: [{ text: '' }] }];
 const AUTOSAVE_DEBOUNCE_MS = 600;
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 const OPEN_SELECT_WIKI_EVENT = 'open-select-wiki';
 const NOTE_CONTENT_EXTERNAL_CHANGED_EVENT = 'note-content-external-changed';
-const LazySettingsDialog = React.lazy(async () => {
-  const mod = await import('@/components/editor/settings-dialog');
-  return { default: mod.SettingsDialog };
-});
+const NOTE_CONTENT_PROPOSAL_EVENT = 'note-content-proposal';
 
 function logSwitchMetric(filePath: string, stage: string, duration: number) {
   console.debug(`[PlateEditor] ${stage} (${filePath}): ${duration.toFixed(1)}ms`);
@@ -111,6 +135,77 @@ function getBaseName(filePath: string): string {
   if (lastDot === -1 || lastDot === 0) return fileName;
   return fileName.slice(0, lastDot);
 }
+
+function hasSuggestionMarks(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  if (KEYS.suggestion in value) return true;
+  const children = (value as { children?: unknown }).children;
+  return Array.isArray(children) && children.some((child) => hasSuggestionMarks(child));
+}
+
+function createSuggestionText(text: string, type: 'insert' | 'remove', id: string, createdAt: number) {
+  const suggestionData: SuggestionData = {
+    createdAt,
+    id,
+    type,
+    userId: null,
+  };
+
+  return {
+    [getSuggestionKey(id)]: suggestionData,
+    [KEYS.suggestion]: true,
+    text,
+  };
+}
+
+function createInlineSuggestionFallback(originalBody: string, proposedBody: string) {
+  const originalLines = originalBody.replace(/\n$/, '').split(/\r?\n/);
+  const proposedLines = proposedBody.replace(/\n$/, '').split(/\r?\n/);
+  const maxLines = Math.max(originalLines.length, proposedLines.length);
+  const children: unknown[] = [];
+
+  for (let index = 0; index < maxLines; index += 1) {
+    const originalLine = originalLines[index];
+    const proposedLine = proposedLines[index];
+
+    if (originalLine === proposedLine) {
+      children.push({ text: `${originalLine ?? ''}${index < maxLines - 1 ? '\n' : ''}` });
+      continue;
+    }
+
+    const id = `ai-${Date.now()}-${index}`;
+    const createdAt = Date.now();
+
+    if (originalLine !== undefined) {
+      children.push(
+        createSuggestionText(
+          `${originalLine}${proposedLine !== undefined || index < maxLines - 1 ? '\n' : ''}`,
+          'remove',
+          id,
+          createdAt
+        )
+      );
+    }
+    if (proposedLine !== undefined) {
+      children.push(
+        createSuggestionText(
+          `${proposedLine}${index < maxLines - 1 ? '\n' : ''}`,
+          'insert',
+          id,
+          createdAt
+        )
+      );
+    }
+  }
+
+  return [
+    {
+      children: children.length ? children : [{ text: '' }],
+      type: KEYS.p,
+    },
+  ];
+}
+
 
 function parseScalarValue(rawValue: string): boolean | null | number | string {
   const trimmedValue = rawValue.trim();
@@ -374,6 +469,43 @@ function NoteLoadingSkeleton() {
   );
 }
 
+function NoteChangeProposalBar({
+  onAccept,
+  onReject,
+}: {
+  onAccept: () => void | Promise<void>;
+  onReject: () => void;
+}) {
+  return (
+    <div className="sticky top-2 z-30 px-16 pb-3 sm:px-[max(64px,calc(50%-350px))]">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-background/95 px-3 py-2 text-sm shadow-sm backdrop-blur">
+        <div className="min-w-0">
+          <div className="truncate font-medium text-foreground">AI suggestions</div>
+          <div className="text-xs text-muted-foreground">
+            Inline changes are shown in the editor.
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Button className="h-7 gap-1.5 px-2.5" onClick={onAccept} size="sm" type="button">
+            <CheckIcon className="size-3.5" />
+            Accept
+          </Button>
+          <Button
+            className="h-7 gap-1.5 px-2.5"
+            onClick={onReject}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <XIcon className="size-3.5" />
+            Reject
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function NoteHeader({
   activeFilePath,
   commitRename,
@@ -537,6 +669,8 @@ export function PlateEditor({
   const [workspaceFilesError, setWorkspaceFilesError] = React.useState<string | null>(
     null
   );
+  const [noteChangeProposal, setNoteChangeProposal] =
+    React.useState<NoteChangeProposal | null>(null);
   const switchTokenRef = React.useRef(0);
   const mountedRef = React.useRef(true);
   const loadWorkspaceTokenRef = React.useRef(0);
@@ -745,6 +879,7 @@ export function PlateEditor({
     debouncedSave.cancel();
     skipAutosaveRef.current = true;
     hasUserEditRef.current = false;
+    setNoteChangeProposal(null);
   }, [filePath, debouncedSave]);
 
   React.useEffect(() => {
@@ -960,6 +1095,99 @@ export function PlateEditor({
   }, [_isActive, applyEditorContent, debouncedSave]);
 
   React.useEffect(() => {
+    const handleNoteContentProposal = (event: Event) => {
+      const detail = (event as CustomEvent<NoteContentProposalDetail>).detail;
+      const proposalPath = detail?.path;
+      const proposedContent = detail?.proposedContent;
+      const currentPath = activeFilePathRef.current;
+
+      if (
+        !_isActive ||
+        !proposalPath ||
+        !currentPath ||
+        !isSameFilePath(proposalPath, currentPath) ||
+        typeof proposedContent !== 'string'
+      ) {
+        console.debug('[PlateEditor] Ignored note content proposal', {
+          currentPath,
+          isActive: _isActive,
+          proposalPath,
+          source: detail?.source ?? null,
+        });
+        return;
+      }
+
+      const originalContent =
+        typeof detail.originalContent === 'string'
+          ? detail.originalContent
+          : lastPersistedContentRef.current ?? '';
+
+      if (originalContent === proposedContent) {
+        console.debug('[PlateEditor] Ignored unchanged note content proposal', {
+          path: currentPath,
+          source: detail.source ?? null,
+        });
+        return;
+      }
+
+      const {
+        body: originalBody,
+        frontmatterBlock: originalFrontmatterBlock,
+        properties: originalProperties,
+      } = extractFrontmatter(originalContent);
+      const {
+        body: proposedBody,
+        frontmatterBlock: proposedFrontmatterBlock,
+        properties: proposedProperties,
+      } = extractFrontmatter(proposedContent);
+      const originalNodes =
+        editor.getApi(MarkdownPlugin).markdown.deserialize(originalBody);
+      const proposedNodes =
+        editor.getApi(MarkdownPlugin).markdown.deserialize(proposedBody);
+      const diffNodes = diffToSuggestions(
+        editor,
+        originalNodes.length > 0 ? originalNodes : EMPTY_DOCUMENT,
+        proposedNodes.length > 0 ? proposedNodes : EMPTY_DOCUMENT
+      );
+      const suggestedNodes = diffNodes.some((node) => hasSuggestionMarks(node))
+        ? diffNodes
+        : createInlineSuggestionFallback(originalBody, proposedBody);
+
+      console.debug('[PlateEditor] Received note content proposal', {
+        hasSuggestionMarks: suggestedNodes.some((node) => hasSuggestionMarks(node)),
+        path: currentPath,
+        proposedChars: proposedContent.length,
+        source: detail.source ?? null,
+      });
+
+      debouncedSave.cancel();
+      skipAutosaveRef.current = true;
+      hasUserEditRef.current = false;
+      suppressNextOnValueChangeRef.current = true;
+      editor.tf.init({
+        value: suggestedNodes.length > 0 ? suggestedNodes : EMPTY_DOCUMENT,
+      });
+      setProperties(originalProperties);
+      setHasFrontmatter(Boolean(originalFrontmatterBlock));
+      setNoteChangeProposal({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        hasFrontmatter: Boolean(proposedFrontmatterBlock),
+        originalContent,
+        path: currentPath,
+        proposedBody,
+        proposedContent,
+        proposedProperties,
+        source: detail.source ?? null,
+      });
+    };
+
+    window.addEventListener(NOTE_CONTENT_PROPOSAL_EVENT, handleNoteContentProposal);
+    return () => {
+      window.removeEventListener(NOTE_CONTENT_PROPOSAL_EVENT, handleNoteContentProposal);
+    };
+  }, [_isActive, debouncedSave, editor]);
+
+  React.useEffect(() => {
     const nextTitle = fileName ?? '';
     setTitleValue(getBaseName(nextTitle));
     lastCommittedTitleRef.current = getBaseName(nextTitle);
@@ -1154,6 +1382,86 @@ export function PlateEditor({
     }
   }, [activeFilePath, titleValue]);
 
+  const rejectNoteChangeProposal = React.useCallback(() => {
+    const proposal = noteChangeProposal;
+    if (proposal && isSameFilePath(proposal.path, activeFilePathRef.current)) {
+      const { body, frontmatterBlock, properties: originalProperties } =
+        extractFrontmatter(proposal.originalContent);
+
+      skipAutosaveRef.current = true;
+      hasUserEditRef.current = false;
+      applyEditorContent(body, proposal.path);
+      setProperties(originalProperties);
+      setHasFrontmatter(Boolean(frontmatterBlock));
+
+      requestAnimationFrame(() => {
+        if (activeFilePathRef.current === proposal.path) {
+          skipAutosaveRef.current = false;
+        }
+      });
+    }
+
+    console.debug('[PlateEditor] Rejected note content proposal', {
+      path: noteChangeProposal?.path ?? null,
+      source: noteChangeProposal?.source ?? null,
+    });
+    setNoteChangeProposal(null);
+  }, [applyEditorContent, noteChangeProposal]);
+
+  const acceptNoteChangeProposal = React.useCallback(async () => {
+    const proposal = noteChangeProposal;
+    if (!proposal || !isSameFilePath(proposal.path, activeFilePathRef.current)) {
+      setNoteChangeProposal(null);
+      return;
+    }
+
+    try {
+      console.debug('[PlateEditor] Accepting note content proposal', {
+        path: proposal.path,
+        source: proposal.source,
+      });
+
+      debouncedSave.cancel();
+      skipAutosaveRef.current = true;
+      hasUserEditRef.current = false;
+
+      await writeTextFile(proposal.path, proposal.proposedContent);
+
+      cacheEditorContent(proposal.path, proposal.proposedContent);
+      lastPersistedContentRef.current = proposal.proposedContent;
+      applyEditorContent(proposal.proposedBody, proposal.path);
+      setProperties(proposal.proposedProperties);
+      setHasFrontmatter(proposal.hasFrontmatter);
+      setNoteChangeProposal(null);
+
+      requestAnimationFrame(() => {
+        if (activeFilePathRef.current === proposal.path) {
+          skipAutosaveRef.current = false;
+        }
+      });
+
+      window.dispatchEvent(
+        new CustomEvent('note-content-saved', {
+          detail: {
+            path: proposal.path,
+          },
+        })
+      );
+      window.dispatchEvent(
+        new CustomEvent(NOTE_CONTENT_EXTERNAL_CHANGED_EVENT, {
+          detail: {
+            content: proposal.proposedContent,
+            path: proposal.path,
+            source: 'accepted-note-proposal',
+          },
+        })
+      );
+    } catch (error) {
+      console.error('[PlateEditor] Failed to accept note content proposal:', error);
+      skipAutosaveRef.current = false;
+    }
+  }, [applyEditorContent, debouncedSave, noteChangeProposal]);
+
   return (
     <Plate
       editor={editor}
@@ -1235,6 +1543,12 @@ export function PlateEditor({
             }}
             properties={visibleProperties}
           />
+          {noteChangeProposal ? (
+            <NoteChangeProposalBar
+              onAccept={acceptNoteChangeProposal}
+              onReject={rejectNoteChangeProposal}
+            />
+          ) : null}
           <Editor ref={editorElementRef} renderChunk={renderEditorChunk} variant="default" />
           {isLoading ? <NoteLoadingSkeleton /> : null}
           {isRenaming && (
@@ -1308,10 +1622,6 @@ export function PlateEditor({
           </Command>
         </DialogContent>
       </Dialog>
-
-      <React.Suspense fallback={null}>
-        <LazySettingsDialog />
-      </React.Suspense>
     </Plate>
   );
 }

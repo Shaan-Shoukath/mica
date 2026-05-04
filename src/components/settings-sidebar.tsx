@@ -2,10 +2,9 @@ import * as React from "react"
 import {
   KeyboardIcon,
   MoonStarIcon,
-  Settings2Icon,
   UserRoundIcon,
   BotIcon,
-  Link2Icon,
+  FileTextIcon,
 } from "lucide-react"
 import type { SettingsPanelId } from "@/lib/settings-panel"
 import { cn } from "@/lib/utils"
@@ -18,8 +17,7 @@ type SettingsSection = {
 
 const settingsSections: SettingsSection[] = [
   { id: "account", title: "Account", icon: UserRoundIcon },
-  { id: "workspace", title: "Workspace", icon: Settings2Icon },
-  { id: "wiki", title: "Wiki", icon: Link2Icon },
+  { id: "editor", title: "Editor", icon: FileTextIcon },
   { id: "shortcuts", title: "Shortcuts", icon: KeyboardIcon },
   { id: "theme", title: "Appearance", icon: MoonStarIcon },
   { id: "models", title: "Providers", icon: BotIcon },

@@ -1,4 +1,4 @@
-export type SettingsPanelId = "account" | "workspace" | "wiki" | "shortcuts" | "theme" | "models"
+export type SettingsPanelId = "account" | "editor" | "shortcuts" | "theme" | "models"
 
 export const DEFAULT_SETTINGS_PANEL: SettingsPanelId = "account"
 

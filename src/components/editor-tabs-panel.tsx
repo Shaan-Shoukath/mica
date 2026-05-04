@@ -1,6 +1,6 @@
 import * as React from "react"
 
-import { XIcon } from "lucide-react"
+import { XIcon, PlusIcon } from "lucide-react"
 import {
   FileCodeIcon,
   FileTextIcon,
@@ -32,7 +32,7 @@ export const EditorTabsPanel = React.memo(function EditorTabsPanel({
   onClose,
 }: EditorTabsPanelProps) {
   return (
-    <div className="editor-tabs bg-muted/40 text-muted-foreground">
+    <div className="editor-tabs bg-muted/40 text-muted-foreground flex items-stretch">
       <div className="flex min-w-0 items-stretch overflow-x-auto scrollbar-hide">
         {openFiles.map((file) => {
           const isActive = selectedTabId === file.id
@@ -48,6 +48,14 @@ export const EditorTabsPanel = React.memo(function EditorTabsPanel({
           )
         })}
       </div>
+      <button
+        type="button"
+        className="flex items-center justify-center px-2 text-muted-foreground/80 hover:bg-accent/60 hover:text-accent-foreground transition-colors"
+        onClick={() => window.dispatchEvent(new CustomEvent("workspace-new-note"))}
+        aria-label="New note"
+      >
+        <PlusIcon className="size-3.5" />
+      </button>
     </div>
   )
 })

@@ -1,10 +1,9 @@
 import * as React from "react"
 import type { SettingsPanelId } from "@/lib/settings-panel"
-import { WorkspaceSettingsPanel } from "@/components/settings/workspace-settings-panel"
-import { WikiSettingsPanel } from "@/components/settings/wiki-settings-panel"
 import { ShortcutsSettingsPanel } from "@/components/settings/shortcuts-settings-panel"
 import { ThemeSettingsPanel } from "@/components/settings/theme-settings-panel"
 import { ModelsSettingsPanel } from "@/components/settings/models-settings-panel"
+import { EditorSettingsPanel } from "@/components/settings/editor-settings-panel"
 import { Button } from "@/components/ui/button"
 import type { ShortcutAction, ShortcutConfig } from "@/lib/shortcuts"
 
@@ -22,13 +21,9 @@ const panelHeadings: Record<
     title: "Account",
     description: "Sign in, identity, and session for sync and cloud features.",
   },
-  workspace: {
-    title: "Workspace",
-    description: "Folders, recents, and how the editor treats your projects.",
-  },
-  wiki: {
-    title: "Wiki",
-    description: "Backlinks, wikilink indexing, freshness checks, and manual rebuilds.",
+  editor: {
+    title: "Editor",
+    description: "Auto suggestions, ghost text, link handling, and writing assistance.",
   },
   shortcuts: {
     title: "Shortcuts",
@@ -90,8 +85,7 @@ export const SettingsView = React.memo(function SettingsView({
             <AccountSettingsPanel />
           </React.Suspense>
         )}
-        {panel === "workspace" && <WorkspaceSettingsPanel />}
-        {panel === "wiki" && <WikiSettingsPanel />}
+        {panel === "editor" && <EditorSettingsPanel />}
         {panel === "shortcuts" && (
           <ShortcutsSettingsPanel
             shortcuts={shortcuts}

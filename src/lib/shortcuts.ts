@@ -5,6 +5,7 @@ export type ShortcutAction =
   | "toggleRightSidebar"
   | "closeCurrentTab"
   | "toggleZenMode"
+  | "newNote"
 
 export type ShortcutConfig = Record<ShortcutAction, string>
 
@@ -63,6 +64,12 @@ export const shortcutDefinitions: ShortcutDefinition[] = [
     defaultBinding: "mod+j",
     description: "Show only the editor surface and hide app chrome.",
     label: "Toggle Zen Mode",
+  },
+  {
+    action: "newNote",
+    defaultBinding: "mod+n",
+    description: "Create a new note in the current workspace.",
+    label: "New Note",
   },
 ]
 
@@ -124,6 +131,8 @@ function normalizeKeyToken(key: string) {
 }
 
 export function normalizeShortcutBinding(binding: string) {
+  if (!binding) return ""
+
   const rawTokens = binding
     .split("+")
     .map((token) => normalizeToken(token))
@@ -166,6 +175,8 @@ export function getShortcutDisplayLabel(binding: string) {
 }
 
 export function matchShortcutEvent(event: KeyboardEvent, binding: string) {
+  if (!binding) return false
+
   const normalizedBinding = normalizeShortcutBinding(binding)
   if (!normalizedBinding) {
     return false

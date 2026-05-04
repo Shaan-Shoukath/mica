@@ -825,6 +825,13 @@ function App() {
       if (matchShortcutEvent(event, shortcuts.closeCurrentTab)) {
         event.preventDefault();
         void closeActiveTabOrWindow();
+        return;
+      }
+
+      if (matchShortcutEvent(event, shortcuts.newNote)) {
+        event.preventDefault();
+        window.dispatchEvent(new CustomEvent("workspace-new-note"));
+        return;
       }
     };
 
