@@ -57,6 +57,8 @@ import {
   readParsedEditorBlocks,
 } from '@/lib/editor-cache';
 import { logInstantFeel, warnInstantFeel } from '@/lib/instant-feel-logger';
+import { clearNewNote, isNewNote } from '@/lib/new-note-title-focus';
+import { cn } from '@/lib/utils';
 
 interface PlateEditorProps {
   fileName?: string;
@@ -402,8 +404,10 @@ function removeProperty(properties: EditorPropertyItem[], key: string) {
   return properties.filter((property) => property.key !== key);
 }
 
+const HIDDEN_PROPERTY_KEYS = new Set(['cover', 'icon']);
+
 function getVisibleProperties(properties: EditorPropertyItem[]) {
-  return properties;
+  return properties.filter((property) => !HIDDEN_PROPERTY_KEYS.has(property.key));
 }
 
 function findTextRange(root: HTMLElement, searchText: string) {
@@ -509,6 +513,7 @@ function NoteChangeProposalBar({
 function NoteHeader({
   activeFilePath,
   commitRename,
+  focusEditor,
   isRenaming,
   lastCommittedTitleRef,
   pageCover,
@@ -516,11 +521,13 @@ function NoteHeader({
   pickCover,
   setTitleValue,
   shouldSkipRenameRef,
+  titleInputRef,
   titleValue,
   updateProperties,
 }: {
   activeFilePath?: string;
   commitRename: () => Promise<void>;
+  focusEditor: () => void;
   isRenaming: boolean;
   lastCommittedTitleRef: React.RefObject<string>;
   pageCover: string | null;
@@ -528,6 +535,7 @@ function NoteHeader({
   pickCover: () => void | Promise<void>;
   setTitleValue: React.Dispatch<React.SetStateAction<string>>;
   shouldSkipRenameRef: React.RefObject<boolean>;
+  titleInputRef: React.RefObject<HTMLInputElement | null>;
   titleValue: string;
   updateProperties: (
     updater: (currentProperties: EditorPropertyItem[]) => EditorPropertyItem[]
@@ -537,90 +545,102 @@ function NoteHeader({
     useEmojiDropdownMenuState({
       closeOnSelect: true,
     });
-  const emojiPicker = (
-    <EmojiPicker
-      {...emojiPickerState}
-      isOpen={isEmojiPickerOpen}
-      onSelectEmoji={(emoji: Emoji) => {
-        updateProperties((currentProperties) =>
-          upsertProperty(currentProperties, 'icon', emoji.skins[0].native)
-        );
-        emojiPickerState.onSelectEmoji(emoji);
-        setIsEmojiPickerOpen(false);
-      }}
-      setIsOpen={setIsEmojiPickerOpen}
-    />
+  const removeIcon = React.useCallback(() => {
+    updateProperties((currentProperties) =>
+      removeProperty(currentProperties, 'icon')
+    );
+    setIsEmojiPickerOpen(false);
+  }, [updateProperties, setIsEmojiPickerOpen]);
+  const emojiPickerContent = (
+    <div className="relative">
+      {pageIcon ? (
+        <Button
+          className="absolute right-2 bottom-2.5 z-10 h-7 cursor-pointer rounded-md bg-popover px-2 text-muted-foreground hover:bg-muted hover:text-foreground"
+          onClick={removeIcon}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
+          <XIcon className="size-3.5" />
+          Remove
+        </Button>
+      ) : null}
+      <EmojiPicker
+        {...emojiPickerState}
+        isOpen={isEmojiPickerOpen}
+        onSelectEmoji={(emoji: Emoji) => {
+          updateProperties((currentProperties) =>
+            upsertProperty(currentProperties, 'icon', emoji.skins[0].native)
+          );
+          setIsEmojiPickerOpen(false);
+        }}
+        setIsOpen={setIsEmojiPickerOpen}
+      />
+    </div>
   );
 
   return (
     <>
-      <EditorHeaderActions
-        coverControl={pageCover ? null : undefined}
-        emojiControl={
-          pageIcon ? null : (
-            <EmojiPopover
-              control={
-              <Button
-                className="h-7 rounded-full px-2.5 text-muted-foreground hover:text-foreground"
-                size="sm"
-                type="button"
-                variant="ghost"
-              >
-                <SmilePlusIcon className="size-3.5" />
-                Add emoji
-              </Button>
-              }
-              isOpen={isEmojiPickerOpen}
-              setIsOpen={setIsEmojiPickerOpen}
-            >
-              {emojiPicker}
-            </EmojiPopover>
-          )
-        }
-        onAddCover={pickCover}
-      />
-      <EditorTitleRow
-        emojiSlot={
-          pageIcon ? (
-            <>
+      {pageCover && pageIcon ? null : (
+        <EditorHeaderActions
+          coverControl={pageCover ? null : undefined}
+          emojiControl={
+            pageIcon ? null : (
               <EmojiPopover
                 control={
-                  <button
-                    className="flex size-12 items-center justify-center rounded-2xl bg-transparent text-4xl leading-none outline-none transition-colors hover:bg-muted/35 focus-visible:bg-muted/35"
-                    style={{
-                      fontFamily:
-                        '"Apple Color Emoji", "Segoe UI Emoji", NotoColorEmoji, "Noto Color Emoji", "Segoe UI Symbol", "Android Emoji", EmojiSymbols',
-                    }}
-                    type="button"
-                  >
-                    {pageIcon}
-                  </button>
+                <Button
+                  className="h-7 rounded-full px-2.5 text-muted-foreground hover:text-foreground"
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  <SmilePlusIcon className="size-3.5" />
+                  Add emoji
+                </Button>
                 }
                 isOpen={isEmojiPickerOpen}
                 setIsOpen={setIsEmojiPickerOpen}
               >
-                {emojiPicker}
+                {emojiPickerContent}
               </EmojiPopover>
+            )
+          }
+          onAddCover={pickCover}
+        />
+      )}
+      {pageIcon ? (
+        <div
+          className={cn(
+            'relative px-16 sm:px-[max(64px,calc(50%-350px))]',
+            pageCover ? 'z-10 -mt-14' : 'pt-6'
+          )}
+        >
+          <EmojiPopover
+            control={
               <button
-                className="mt-1 flex size-5 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:bg-muted focus-visible:text-foreground"
-                onClick={() => {
-                  updateProperties((currentProperties) =>
-                    removeProperty(currentProperties, 'icon')
-                  );
-                  setIsEmojiPickerOpen(false);
+                className="-ml-2 flex size-24 cursor-pointer items-center justify-start rounded-2xl bg-transparent px-2 text-6xl leading-none outline-none"
+                style={{
+                  fontFamily:
+                    '"Apple Color Emoji", "Segoe UI Emoji", NotoColorEmoji, "Noto Color Emoji", "Segoe UI Symbol", "Android Emoji", EmojiSymbols',
                 }}
                 type="button"
               >
-                <XIcon className="size-3" />
+                {pageIcon}
               </button>
-            </>
-          ) : undefined
-        }
-      >
+            }
+            isOpen={isEmojiPickerOpen}
+            setIsOpen={setIsEmojiPickerOpen}
+          >
+            {emojiPickerContent}
+          </EmojiPopover>
+        </div>
+      ) : null}
+      <EditorTitleRow>
         <EditorTitleInput
           aria-label="File name"
           className="px-0 pt-3 sm:px-0"
           disabled={!activeFilePath || isRenaming}
+          ref={titleInputRef}
           onBlur={() => {
             void commitRename();
           }}
@@ -631,6 +651,7 @@ function NoteHeader({
             if (event.key === 'Enter') {
               event.preventDefault();
               event.currentTarget.blur();
+              focusEditor();
             }
 
             if (event.key === 'Escape') {
@@ -684,9 +705,40 @@ export function PlateEditor({
   const lastPersistedContentRef = React.useRef<string | null>(null);
   const hasUserEditRef = React.useRef(false);
   const editorElementRef = React.useRef<HTMLDivElement | null>(null);
+  const titleInputRef = React.useRef<HTMLInputElement | null>(null);
 
   React.useLayoutEffect(() => {
     activeFilePathRef.current = activeFilePath;
+  }, [activeFilePath]);
+
+  React.useEffect(() => {
+    if (!activeFilePath) return;
+    if (!isNewNote(activeFilePath)) return;
+    let cancelled = false;
+    let attempts = 0;
+    let rafId = 0;
+    const path = activeFilePath;
+    const tryFocus = () => {
+      if (cancelled) return;
+      const input = titleInputRef.current;
+      if (input && !input.disabled && input.value.length > 0) {
+        input.focus();
+        input.setSelectionRange(0, input.value.length);
+        clearNewNote(path);
+        return;
+      }
+      attempts += 1;
+      if (attempts < 20) {
+        rafId = requestAnimationFrame(tryFocus);
+      } else {
+        clearNewNote(path);
+      }
+    };
+    rafId = requestAnimationFrame(tryFocus);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
+    };
   }, [activeFilePath]);
 
   React.useLayoutEffect(() => {
@@ -705,6 +757,9 @@ export function PlateEditor({
     plugins: EditorKit,
     value: EMPTY_DOCUMENT,
   });
+  const focusEditor = React.useCallback(() => {
+    editor.tf.focus({ edge: 'startEditor' });
+  }, [editor]);
   const pageIconValue = getPropertyValue(properties, 'icon');
   const pageIcon = typeof pageIconValue === 'string' ? pageIconValue : null;
   const pageCoverValue = getPropertyValue(properties, 'cover');
@@ -1521,6 +1576,7 @@ export function PlateEditor({
             <NoteHeader
               activeFilePath={activeFilePath}
               commitRename={commitRename}
+              focusEditor={focusEditor}
               isRenaming={isRenaming}
               lastCommittedTitleRef={lastCommittedTitleRef}
               pageCover={pageCover}
@@ -1528,6 +1584,7 @@ export function PlateEditor({
               pickCover={pickCover}
               setTitleValue={setTitleValue}
               shouldSkipRenameRef={shouldSkipRenameRef}
+              titleInputRef={titleInputRef}
               titleValue={titleValue}
               updateProperties={updateProperties}
             />
