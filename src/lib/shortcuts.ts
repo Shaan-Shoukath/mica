@@ -6,6 +6,8 @@ export type ShortcutAction =
   | "closeCurrentTab"
   | "toggleZenMode"
   | "newNote"
+  | "deleteCurrentNote"
+  | "reloadApp"
 
 export type ShortcutConfig = Record<ShortcutAction, string>
 
@@ -70,6 +72,18 @@ export const shortcutDefinitions: ShortcutDefinition[] = [
     defaultBinding: "mod+n",
     description: "Create a new note in the current workspace.",
     label: "New Note",
+  },
+  {
+    action: "deleteCurrentNote",
+    defaultBinding: "mod+backspace",
+    description: "Delete the currently active note (asks for confirmation).",
+    label: "Delete Current Note",
+  },
+  {
+    action: "reloadApp",
+    defaultBinding: "mod+r",
+    description: "Reload the application window.",
+    label: "Reload App",
   },
 ]
 
