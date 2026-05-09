@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useState, useCallback, useRef } from "react";
+import { startTransition, useEffect, useLayoutEffect, useState, useCallback, useRef } from "react";
 import { flushSync } from "react-dom";
 import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
 import "./App.css";
@@ -33,6 +33,9 @@ import { readCachedAuthUser } from "./lib/cached-auth-user";
 import { isOnboardingComplete } from "./lib/onboarding";
 import { DiffViewer } from "./components/source-control/diff-viewer";
 import { exists, mkdir, stat, writeTextFile } from "@tauri-apps/plugin-fs";
+import { message as messageDialog } from "@tauri-apps/plugin-dialog";
+import { reloadApp } from "./lib/reload-app";
+import { markNewNote } from "./lib/new-note-title-focus";
 import {
   getCurrentWorkspace,
   getWorkspaceScopedStorageKey,
@@ -89,7 +92,7 @@ const EMPTY_EXCALIDRAW_DOCUMENT = JSON.stringify(
   {
     type: "excalidraw",
     version: 2,
-    source: "https://notelab.app",
+    source: "https://mica.app",
     elements: [],
     appState: {
       viewBackgroundColor: "#ffffff",
@@ -191,11 +194,11 @@ function App() {
     );
   const isAuthenticated = Boolean(signedInUser) || guest;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     openFilesRef.current = openFiles;
   }, [openFiles]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     selectedFileRef.current = selectedFile;
   }, [selectedFile]);
 
@@ -475,7 +478,7 @@ function App() {
         name: string;
       }>).detail;
 
-      startTransition(() => {
+      flushSync(() => {
         setOpenFiles((prev) =>
           prev.map((file) =>
             file.path === path ? { ...file, path: nextPath, name } : file
@@ -510,7 +513,7 @@ function App() {
         return candidate;
       };
 
-      startTransition(() => {
+      flushSync(() => {
         setOpenFiles((prev) =>
           prev.map((file) => ({
             ...file,
@@ -550,14 +553,11 @@ function App() {
       if (!(await exists(`${parentDir}/${base}${extension}`))) {
         return `${base}${extension}`;
       }
-      if (!(await exists(`${parentDir}/${base} copy${extension}`))) {
-        return `${base} copy${extension}`;
-      }
       let counter = 1;
-      while (await exists(`${parentDir}/${base} copy ${counter}${extension}`)) {
+      while (await exists(`${parentDir}/${base} ${counter}${extension}`)) {
         counter++;
       }
-      return `${base} copy ${counter}${extension}`;
+      return `${base} ${counter}${extension}`;
     };
 
     const handleNewFolder = async () => {
@@ -571,7 +571,7 @@ function App() {
         window.dispatchEvent(new CustomEvent("directory-refresh", { detail: { path: parentDir } }));
       } catch (err) {
         console.error("Failed to create folder:", err);
-        alert(`Failed to create folder: ${err}`);
+        void messageDialog(`Failed to create folder: ${err}`, { title: "Create failed", kind: "error" });
       }
     };
 
@@ -582,12 +582,13 @@ function App() {
       const finalName = await resolveAvailableName(parentDir, "Untitled", ".md");
       const finalPath = `${parentDir}/${finalName}`;
       try {
-        await writeTextFile(finalPath, `# Untitled\n\n`);
+        await writeTextFile(finalPath, "");
+        markNewNote(finalPath);
         window.dispatchEvent(new CustomEvent("directory-refresh", { detail: { path: parentDir } }));
         window.dispatchEvent(new CustomEvent("file-selected", { detail: { path: finalPath, name: finalName } }));
       } catch (err) {
         console.error("Failed to create note:", err);
-        alert(`Failed to create note: ${err}`);
+        void messageDialog(`Failed to create note: ${err}`, { title: "Create failed", kind: "error" });
       }
     };
     const handleNewExcalidraw = async () => {
@@ -606,7 +607,7 @@ function App() {
         );
       } catch (err) {
         console.error("Failed to create Excalidraw file:", err);
-        alert(`Failed to create Excalidraw file: ${err}`);
+        void messageDialog(`Failed to create Excalidraw file: ${err}`, { title: "Create failed", kind: "error" });
       }
     };
     const handleNewCodeDrawing = async () => {
@@ -625,7 +626,7 @@ function App() {
         );
       } catch (err) {
         console.error("Failed to create Code Drawing file:", err);
-        alert(`Failed to create Code Drawing file: ${err}`);
+        void messageDialog(`Failed to create Code Drawing file: ${err}`, { title: "Create failed", kind: "error" });
       }
     };
     const handleActivePathChanged = (e: Event) => {
@@ -779,6 +780,54 @@ function App() {
     });
   }, []);
 
+  useEffect(() => {
+    const handleEntryDeleted = (e: Event) => {
+      const detail = (e as CustomEvent<{ path: string; isDir?: boolean }>).detail;
+      const deletedPath = detail?.path;
+      if (!deletedPath) return;
+      const isDir = Boolean(detail?.isDir);
+      const prefix = isDir ? `${deletedPath}/` : null;
+
+      setOpenFiles((prev) => {
+        const matches = prev.filter((file) =>
+          file.path === deletedPath || (prefix != null && file.path.startsWith(prefix))
+        );
+        if (matches.length === 0) return prev;
+
+        const nextFiles = prev.filter((file) => !matches.includes(file));
+        const activeId = selectedFileRef.current?.id ?? null;
+        const activeWasClosed = matches.some((file) => file.id === activeId);
+
+        if (activeWasClosed) {
+          const closedIndex = prev.findIndex((file) => file.id === activeId);
+          let fallback: OpenFileTab | null = null;
+          for (let i = closedIndex + 1; i < prev.length; i++) {
+            if (!matches.includes(prev[i])) {
+              fallback = nextFiles.find((file) => file.id === prev[i].id) ?? null;
+              if (fallback) break;
+            }
+          }
+          if (!fallback) {
+            for (let i = closedIndex - 1; i >= 0; i--) {
+              if (!matches.includes(prev[i])) {
+                fallback = nextFiles.find((file) => file.id === prev[i].id) ?? null;
+                if (fallback) break;
+              }
+            }
+          }
+          startTransition(() => {
+            setSelectedFile(fallback);
+          });
+        }
+
+        return nextFiles;
+      });
+    };
+
+    window.addEventListener("entry-deleted", handleEntryDeleted);
+    return () => window.removeEventListener("entry-deleted", handleEntryDeleted);
+  }, []);
+
   const closeActiveTabOrWindow = useCallback(async () => {
     const activeTabId = selectedFileRef.current?.id ?? openFilesRef.current.at(-1)?.id;
 
@@ -795,6 +844,13 @@ function App() {
   }, [closeFile]);
 
   useEffect(() => {
+    const isEditableTarget = (target: HTMLElement | null) => {
+      if (!target) return false;
+      if (target.isContentEditable) return true;
+      const tag = target.tagName;
+      return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+    };
+
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target?.closest("[data-shortcut-capture='true']")) {
@@ -838,10 +894,30 @@ function App() {
         window.dispatchEvent(new CustomEvent("workspace-new-note"));
         return;
       }
+
+      if (matchShortcutEvent(event, shortcuts.reloadApp)) {
+        if (isEditableTarget(target)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        reloadApp();
+        return;
+      }
+
+      if (matchShortcutEvent(event, shortcuts.deleteCurrentNote)) {
+        if (isEditableTarget(target) || activeViewRef.current !== "explorer") {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        window.dispatchEvent(new CustomEvent("workspace-delete-current"));
+        return;
+      }
     };
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () =>
+      window.removeEventListener("keydown", handleKeyDown, { capture: true });
   }, [closeActiveTabOrWindow, shortcuts]);
 
   const handleShortcutChange = useCallback((action: ShortcutAction, binding: string) => {
