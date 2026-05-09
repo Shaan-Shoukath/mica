@@ -9,7 +9,7 @@ fn get_default_workspace_path() -> Result<String, String> {
     let docs = dirs::document_dir().ok_or_else(|| {
         "Could not resolve your Documents folder. Set a workspace folder manually.".to_string()
     })?;
-    Ok(docs.join("notelab").to_string_lossy().to_string())
+    Ok(docs.join("mica").to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -62,7 +62,9 @@ async fn read_workspace_note_connections(
 }
 
 #[tauri::command]
-fn read_workspace_tree(workspace: String) -> Result<Vec<String>, String> {
+fn read_workspace_tree(
+    workspace: String,
+) -> Result<Vec<workspace_tree::WorkspaceTreeEntry>, String> {
     workspace_tree::read_workspace_tree(&workspace)
 }
 

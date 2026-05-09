@@ -22,6 +22,7 @@ export function toAbsolutePath(relative: string, workspace: string): string {
 export class WorkspacePathStore {
   private workspace: string | null = null
   private paths: string[] = []
+  private mtimes = new Map<string, number>()
   private listeners = new Set<() => void>()
   private unwatch: UnwatchFn | null = null
   private watchReloadQueued = false
@@ -37,6 +38,7 @@ export class WorkspacePathStore {
 
   getSnapshot = (): number => this.version
   getPaths = (): string[] => this.paths
+  getMtime = (relativePath: string): number | undefined => this.mtimes.get(relativePath)
   getWorkspace = (): string | null => this.workspace
   isLoading = (): boolean => this.loading
 
@@ -67,18 +69,26 @@ export class WorkspacePathStore {
   async reload(): Promise<void> {
     if (!this.workspace) return
     try {
-      const absolutePaths = await readWorkspaceTree(this.workspace)
+      const entries = await readWorkspaceTree(this.workspace)
       const relative: string[] = []
+      const mtimes = new Map<string, number>()
       const ws = this.workspace
-      for (const p of absolutePaths) {
-        const rel = toRelativePath(p.replace(/\/+$/, ""), ws)
+      for (const entry of entries) {
+        const absolute = entry.path
+        const rel = toRelativePath(absolute.replace(/\/+$/, ""), ws)
         if (!rel) continue
-        relative.push(p.endsWith("/") ? `${rel}/` : rel)
+        const relWithTrail = absolute.endsWith("/") ? `${rel}/` : rel
+        relative.push(relWithTrail)
+        if (typeof entry.mtimeMs === "number") {
+          mtimes.set(relWithTrail, entry.mtimeMs)
+        }
       }
       this.paths = relative
+      this.mtimes = mtimes
     } catch (err) {
       console.error("[WorkspacePathStore] Failed to read workspace:", err)
       this.paths = []
+      this.mtimes = new Map()
     }
     this.bump()
   }
