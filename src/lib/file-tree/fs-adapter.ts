@@ -18,9 +18,14 @@ function normalizePath(path: string) {
   return path.replace(/\\/g, "/").replace(/\/+$/, "")
 }
 
-export async function readWorkspaceTree(rootPath: string): Promise<string[]> {
+export interface WorkspaceTreeEntry {
+  path: string
+  mtimeMs: number | null
+}
+
+export async function readWorkspaceTree(rootPath: string): Promise<WorkspaceTreeEntry[]> {
   const startedAt = performance.now()
-  const entries = await invoke<string[]>("read_workspace_tree", { workspace: rootPath })
+  const entries = await invoke<WorkspaceTreeEntry[]>("read_workspace_tree", { workspace: rootPath })
   logInstantFeel("workspace-tree-read", {
     workspace: rootPath,
     entries: entries.length,

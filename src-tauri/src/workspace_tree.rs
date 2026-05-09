@@ -4,7 +4,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter};
 
@@ -40,7 +40,22 @@ fn should_skip_name(name: &str) -> bool {
     name.starts_with('.')
 }
 
-fn scan_directory(root: &Path, dir: &Path, out: &mut Vec<String>) {
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceTreeEntry {
+    pub path: String,
+    #[serde(rename = "mtimeMs")]
+    pub mtime_ms: Option<i64>,
+}
+
+fn entry_mtime_ms(path: &Path) -> Option<i64> {
+    let meta = fs::metadata(path).ok()?;
+    let modified = meta.modified().ok()?;
+    let duration = modified.duration_since(UNIX_EPOCH).ok()?;
+    let millis = duration.as_millis();
+    i64::try_from(millis).ok()
+}
+
+fn scan_directory(root: &Path, dir: &Path, out: &mut Vec<WorkspaceTreeEntry>) {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(_) => return,
@@ -73,19 +88,26 @@ fn scan_directory(root: &Path, dir: &Path, out: &mut Vec<String>) {
 
         if path.is_dir() {
             let normalized = normalize_path(&path);
-            out.push(format!("{}/", normalized));
+            out.push(WorkspaceTreeEntry {
+                path: format!("{}/", normalized),
+                mtime_ms: entry_mtime_ms(&path),
+            });
             scan_directory(root, &path, out);
             continue;
         }
 
         if path.is_file() {
             let _ = root;
-            out.push(normalize_path(&path));
+            out.push(WorkspaceTreeEntry {
+                path: normalize_path(&path),
+                mtime_ms: entry_mtime_ms(&path),
+            });
         }
     }
+    let _ = SystemTime::now();
 }
 
-pub fn read_workspace_tree(workspace: &str) -> Result<Vec<String>, String> {
+pub fn read_workspace_tree(workspace: &str) -> Result<Vec<WorkspaceTreeEntry>, String> {
     let root = PathBuf::from(workspace);
     if !root.exists() {
         return Err(format!("Workspace path does not exist: {}", workspace));

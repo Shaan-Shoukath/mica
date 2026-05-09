@@ -30,36 +30,29 @@ export const EditorSettingsPanel = React.memo(function EditorSettingsPanel() {
 
   return (
     <section className="rounded-xl border border-border/60 bg-card px-4 py-4 shadow-sm">
-      <h2 className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/85">Editor</h2>
+      <h2 className="text-xs font-semibold uppercase tracking-[0.08em] text-foreground/85">
+        Browser
+      </h2>
       <p className="mt-1.5 text-xs text-muted-foreground">
-        Configure editor behavior and link handling.
+        Control how external links from the editor are opened.
       </p>
-
-      <div className="mt-4 space-y-4">
-        <div>
-          <label className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
-            Browser
-          </label>
-          <p className="mt-1.5 text-xs text-muted-foreground">
-            Control how external links from the editor are opened.
-          </p>
-          <label className="mt-2 flex cursor-pointer items-start justify-between gap-4 rounded-md bg-muted/50 px-3 py-2">
-            <span className="min-w-0">
-              <span className="block text-xs font-medium text-foreground">
-                Open links in in-app browser
-              </span>
-              <span className="mt-0.5 block text-xs text-muted-foreground">
-                Links clicked in notes open in a new tab with an embedded browser.
-                When off, links open in your system browser.
-              </span>
+      <div className="mt-3">
+        <label className="flex cursor-pointer items-start justify-between gap-4 rounded-md bg-muted/50 px-3 py-2">
+          <span className="min-w-0">
+            <span className="block text-xs font-medium text-foreground">
+              Open links in in-app browser
             </span>
-            <Switch
-              checked={openLinksInApp}
-              onCheckedChange={handleBrowserToggle}
-              aria-label="Open links in in-app browser"
-            />
-          </label>
-        </div>
+            <span className="mt-0.5 block text-xs text-muted-foreground">
+              Links clicked in notes open in a new tab with an embedded browser.
+              When off, links open in your system browser.
+            </span>
+          </span>
+          <Switch
+            checked={openLinksInApp}
+            onCheckedChange={handleBrowserToggle}
+            aria-label="Open links in in-app browser"
+          />
+        </label>
       </div>
     </section>
   )
